@@ -1,252 +1,102 @@
-# DROID-SLAM
-
-
-<!-- <center><img src="misc/DROID.png" width="640" style="center"></center> -->
-
-
-[![IMAGE ALT TEXT HERE](misc/screenshot.png)](https://www.youtube.com/watch?v=GG78CSlSHSA)
-
-
-
-[DROID-SLAM: Deep Visual SLAM for Monocular, Stereo, and RGB-D Cameras](https://arxiv.org/abs/2108.10869)  
-Zachary Teed and Jia Deng
-
-```
-@article{teed2021droid,
-  title={{DROID-SLAM: Deep Visual SLAM for Monocular, Stereo, and RGB-D Cameras}},
-  author={Teed, Zachary and Deng, Jia},
-  journal={Advances in neural information processing systems},
-  year={2021}
-}
-```
-
-
-## Requirements
-
-To run the code you will need ...
-* **Inference:** Running the demos will require a GPU with at least 11G of memory. 
-
-* **Training:** Training requires a GPU with at least 24G of memory. We train on 4 x RTX-3090 GPUs.
-
-## Getting Started
-Clone the repo using the `--recursive` flag
-```Bash
-git clone --recursive https://github.com/princeton-vl/DROID-SLAM.git
-```
-
-  If you forgot `--recursive`
-  ```Bash
-  git submodule update --init --recursive .
-  ```
-
-### Installing
-
-Requires CUDA to be installed on your machine. If you run into issues, make sure the PyTorch and CUDA major versions match with the following check (minor version mismatch should be fine).
-
-```Bash
-nvidia-smi
-python -c "import torch; print(torch.version.cuda)"
-```
-
-```Bash
-python3 -m venv .venv
-source .venv/bin/activate
-
-# install requirements (tested up to torch 2.7)
-pip install -r requirements.txt
-
-# optional (for visualization)
-pip install moderngl moderngl-window
-
-# install third-party modules (this will take a while)
-pip install thirdparty/lietorch
-pip install thirdparty/pytorch_scatter
-
-# install droid-backends
-pip install -e .
-```
-
-<!-- ### Deprecated Conda Installation
-
-1. Creating a new anaconda environment using the provided .yaml file. Use `environment_novis.yaml` to if you do not want to use the visualization
-```Bash
-conda env create -f environment.yaml
-pip install evo --upgrade --no-binary evo
-pip install gdown
-```
-
-2. Compile the extensions (takes about 10 minutes)
-```Bash
-python setup.py install
-``` -->
-
-
-## Demos
-
-1. Download the model from google drive: [droid.pth](https://drive.google.com/file/d/1PpqVt1H4maBa_GbPJp4NwxRsd9jk-elh/view?usp=sharing) or with
-    ```Bash
-    ./tools/download_model.sh
-    ```
-
-2. Download some sample videos using the provided script.
-    ```Bash
-    ./tools/download_sample_data.sh
-    ```
-
-Run the demo on any of the samples (all demos can be run on a GPU with 11G of memory). To save the reconstruction with full resolution depth maps use the `--reconstruction_path` flag. If you ran with `--reconstruction_path my_reconstruction.pth`, you can view the reconstruction in high resolution by running
-```Bash
-python view_reconstruction.py my_reconstruction.pth
-```
-
-**Asynchronous and Multi-GPU Inference:** You can run the demos in asynchronous mode by running with `--asynchronous`. In this setting, the frontend and backend will run in seperate Python processes. You can additionally enable multi-GPU inference by setting the devices of the frontend and backend processes with the following arguments. 
-
-**Visualization currently doesn't work multi-gpu setting**. You will need to run with ``--disable_vis``.
-
-
-```Bash
-python demo.py --imagedir=data/sfm_bench/rgb --calib=calib/eth.txt
-```
-
-```Bash
-python demo.py --imagedir=data/mav0/cam0/data --calib=calib/euroc.txt --t0=150
-```
-
-```Bash
-python demo.py --imagedir=data/rgbd_dataset_freiburg3_cabinet/rgb --calib=calib/tum3.txt
-```
-
-
-**Running on your own data:** All you need is a calibration file. Calibration files are in the form 
-```
-fx fy cx cy [k1 k2 p1 p2 [ k3 [ k4 k5 k6 ]]]
-```
-with parameters in brackets optional.
-
-## Evaluation
-We provide evaluation scripts for TartanAir, EuRoC, TUM, and ETH3D-SLAM. EuRoC and TUM can be run on a 1080Ti. The TartanAir and ETH3D-SLAM datasets will require 24G of memory. 
-
-**Asynchronous and Multi-GPU Inference:** You can run evaluation in asynchronous mode by running with `--asynchronous`. In this setting, the frontend and backend will run in seperate Python processes. You can additionally enable multi-GPU inference by setting the devices of the frontend and backend processes with the following arguments. For example:
-```
-python evaluation_scripts/test_tartanair.py \
-  --datapath data/tartanair_test/mono \
-  --gt_path data/tartanair_test/mono_gt \
-  --frontend_device cuda:0 \
-  --backend_device cuda:1 \
-  --asynchronous \
-  --disable_vis
-```
-
-
-**Note:** Running with `--asynchronous` will typically produce better results, but this mode is not deterministic.
-
-### TartanAir (Mono + Stereo)
-
-Download the [TartanAir](https://theairlab.org/tartanair-dataset/) test set with this command.
-
-```Bash
-./tools/download_tartanair_test.sh
-```
-
-Or from these links: [Images](https://drive.google.com/file/d/1N8qoU-oEjRKdaKSrHPWA-xsnRtofR_jJ/view), [Groundtruth](https://cmu.box.com/shared/static/3p1sf0eljfwrz4qgbpc6g95xtn2alyfk.zip) 
-
-
-
-**Monocular evaluation:**
-```bash
-python evaluation_scripts/test_tartanair.py \
-  --datapath datasets/tartanair_test/mono \
-  --gt_path datasets/tartanair_test/mono_gt \
-  --disable_vis
-```
-
-**Stereo evaluation:**
-```bash
-python evaluation_scripts/test_tartanair.py \
-  --datapath datasets/tartanair_test/stereo \
-  --gt_path datasets/tartanair_test/stereo_gt \
-  --stereo --disable_vis
-```
-
-
-**Evaluating on the validation split:**
-
-Download the [TartanAir](https://theairlab.org/tartanair-dataset/) dataset using the script `thirdparty/tartanair_tools/download_training.py` and put them in `datasets/TartanAir`
-```Bash
-# monocular eval
-./tools/validate_tartanair.sh --plot_curve
-
-# stereo eval
-./tools/validate_tartanair.sh --plot_curve  --stereo
-```
-
-### EuRoC (Mono + Stereo)
-Download the [EuRoC](https://projects.asl.ethz.ch/datasets/doku.php?id=kmavvisualinertialdatasets) sequences (ASL format):
-```Bash
-./tools/download_euroc.sh
-```
-
-Then run evaluation:
-```Bash
-# monocular eval (single gpu)
-./tools/evaluate_euroc.sh
-
-# monocular eval (multi gpu)
-./tools/evaluate_euroc.sh --asynchronous --frontend_device cuda:0 --backend_device cuda:1
-
-# stereo eval (single gpu)
-./tools/evaluate_euroc.sh --stereo
-
-# stereo eval (multi gpu)
-./tools/evaluate_euroc.sh --stereo --asynchronous --frontend_device cuda:0 --backend_device cuda:1
-```
-
-### TUM-RGBD (Mono)
-Download the [TUM-RGBD](https://vision.in.tum.de/data/datasets/rgbd-dataset/download) sequences:
-```
-./tools/download_tum.sh
-```
-Then run evaluation:
-```Bash
-# monocular eval (single gpu)
-./tools/evaluate_tum.sh
-
-# monocular eval (multi gpu)
-./tools/evaluate_tum.sh --asynchronous --frontend_device cuda:0 --backend_device cuda:1
-```
-
-### ETH3D (RGB-D)
-Download the [ETH3D](https://www.eth3d.net/slam_datasets) dataset:
-```Bash
-./tools/download_eth3d.sh
-```
-
-```Bash
-# RGB-D eval (single gpu)
-./tools/evaluate_eth3d.sh > eth3d_results.txt
-python evaluation_scripts/parse_results.py eth3d_results.txt
-
-# RGB-D eval (multi gpu)
-./tools/evaluate_eth3d.sh --asynchronous --frontend_device cuda:0 --backend_device cuda:1 > eth3d_results_async.txt
-python evaluation_scripts/parse_results.py eth3d_results_async.txt
-```
-
-## Training
-
-First download the TartanAir dataset. The download script can be found in `thirdparty/tartanair_tools/download_training.py`. You will only need the `rgb` and `depth` data.
-
-```
-python download_training.py --rgb --depth
-```
-
-You can then run the training script. We use 4x3090 RTX GPUs for training which takes approximatly 1 week. If you use a different number of GPUs, adjust the learning rate accordingly.
-
-**Note:** On the first training run, covisibility is computed between all pairs of frames. This can take several hours, but the results are cached so that future training runs will start immediately. 
-
-
-```
-python train.py --datapath=<path to tartanair> --gpus=4 --lr=0.00025
-```
-
-
-## Acknowledgements
-Data from [TartanAir](https://theairlab.org/tartanair-dataset/) was used to train our model. We additionally use evaluation tools from [evo](https://github.com/MichaelGrupp/evo) and [tartanair_tools](https://github.com/castacks/tartanair_tools).
+# JamMa-SLAM Integration Environment
+# Base: nvidia/cuda:11.8.0-cudnn8-devel-ubuntu22.04
+# Python: 3.9 (via Miniconda)
+# Date: 2026-03-25
+
+# 1. causal-conv1d (pre-built wheel)
+pip install https://github.com/Dao-AILab/causal-conv1d/releases/download/v1.1.0/causal_conv1d-1.1.0+cu118torch2.0cxx11abiFALSE-cp39-cp39-linux_x86_64.whl
+
+# 2. mamba-ssm (pre-built wheel)
+pip install https://github.com/state-spaces/mamba/releases/download/v1.1.1/mamba_ssm-1.1.1+cu118torch2.0cxx11abiFALSE-cp39-cp39-linux_x86_64.whl
+
+# 3. torch-scatter
+pip install torch-scatter -f https://data.pyg.org/whl/torch-2.0.1+cu118.html
+
+# ── Core: PyTorch (CUDA 11.8) ──────────────────────────────────────────
+torch==2.0.1+cu118
+torchvision==0.15.2+cu118
+torchaudio==2.0.2+cu118
+--extra-index-url https://download.pytorch.org/whl/cu118
+
+# ── Mamba (pre-built wheels, cxx11abi=FALSE, cu118, py39) ──────────────
+# Install via:
+# pip install https://github.com/Dao-AILab/causal-conv1d/releases/download/v1.1.0/causal_conv1d-1.1.0+cu118torch2.0cxx11abiFALSE-cp39-cp39-linux_x86_64.whl
+# pip install https://github.com/state-spaces/mamba/releases/download/v1.1.1/mamba_ssm-1.1.1+cu118torch2.0cxx11abiFALSE-cp39-cp39-linux_x86_64.whl
+causal-conv1d==1.1.0
+mamba-ssm==1.1.1
+
+# ── torch-scatter ───────────────────────────────────────────────────────
+# Install via:
+# pip install torch-scatter -f https://data.pyg.org/whl/torch-2.0.1+cu118.html
+torch-scatter==2.1.2+pt20cu118
+
+# ── SLAM & Geometry ─────────────────────────────────────────────────────
+lietorch==0.3
+droid_backends==0.0.0
+
+# ── JamMa Dependencies ──────────────────────────────────────────────────
+pytorch-lightning==1.9.5
+lightning-utilities==0.15.2
+einops==0.8.1
+kornia==0.7.0
+yacs==0.1.8
+h5py==3.11.0
+poselib==2.0.4
+timm==1.0.15
+albumentations==0.5.1
+scikit-image==0.21.0
+loguru==0.7.3
+transformers==4.35.2
+tokenizers==0.15.2
+safetensors==0.7.0
+
+# ── DROID-SLAM Dependencies ─────────────────────────────────────────────
+evo==1.31.1
+open3d==0.18.0
+gdown==5.2.1
+tensorboard==2.20.0
+tensorboard-data-server==0.7.2
+opencv-python==4.8.1.78
+scipy==1.10.1
+numpy==1.26.4
+PyYAML==6.0.3
+tqdm==4.67.1
+
+# ── open3d sub-dependencies ─────────────────────────────────────────────
+addict==2.4.0
+ConfigArgParse==1.7.5
+ipywidgets==8.1.8
+nbformat==5.10.4
+pandas==2.3.3
+pyquaternion==0.9.9
+scikit-learn==1.6.1
+dash==4.1.0
+plotly==6.6.0
+
+# ── evo sub-dependencies ────────────────────────────────────────────────
+argcomplete==3.6.3
+colorama==0.4.6
+natsort==8.4.0
+numexpr==2.10.2
+rosbags==0.9.23
+seaborn==0.13.2
+
+# ── General ─────────────────────────────────────────────────────────────
+triton==2.0.0
+ninja==1.13.0
+cmake==3.25.0
+matplotlib==3.9.4
+pillow==11.3.0
+requests==2.32.5
+packaging==25.0
+pyDeprecate==0.3.2
+torchmetrics==0.7.0
+thop==0.1.1.post2209072238
+shapely==2.0.7
+imgaug==0.4.0
+bs4==0.0.2
+sympy==1.14.0
+networkx==3.2.1
+filelock==3.19.1
+fsspec==2025.10.0
+huggingface_hub==0.36.2
