@@ -1,3 +1,13 @@
+"""
+droid_net_jamma.py
+DROID-SLAM + JamMa JEGO enrichment.
+
+Modification from droid_net.py:
+  1. Import JEGOModule
+  2. DroidNet.__init__: add self.jego = JEGOModule(feature_dim=128, depth=4)
+  3. DroidNet.forward: enrich fmaps with JEGO before CorrBlock
+"""
+
 import numpy as np
 import torch
 import torch.nn as nn
@@ -8,6 +18,7 @@ from modules.extractor import BasicEncoder
 from modules.corr import CorrBlock
 from modules.gru import ConvGRU
 from modules.clipping import GradientClip
+from modules.jego_module import JEGOModule          # ← add
 
 from lietorch import SE3
 from geom.ba import BA
@@ -19,7 +30,6 @@ from torch_scatter import scatter_mean
 
 
 def cvx_upsample(data, mask):
-    """ upsample pixel-wise transformation field """
     batch, ht, wd, dim = data.shape
     data = data.permute(0, 3, 1, 2)
     mask = mask.view(batch, 1, 9, 8, 8, ht, wd)
@@ -31,7 +41,6 @@ def cvx_upsample(data, mask):
     up_data = torch.sum(mask * up_data, dim=2)
     up_data = up_data.permute(0, 4, 2, 5, 3, 1)
     up_data = up_data.reshape(batch, 8*ht, 8*wd, dim)
-
     return up_data
 
 def upsample_disp(disp, mask):
@@ -109,28 +118,25 @@ class UpdateModule(nn.Module):
         self.agg = GraphAgg()
 
     def forward(self, net, inp, corr, flow=None, ii=None, jj=None):
-        """ RaftSLAM update operator """
-
         batch, num, ch, ht, wd = net.shape
 
         if flow is None:
             flow = torch.zeros(batch, num, 4, ht, wd, device=net.device)
 
         output_dim = (batch, num, -1, ht, wd)
-        net = net.view(batch*num, -1, ht, wd)
-        inp = inp.view(batch*num, -1, ht, wd)        
+        net  = net.view(batch*num, -1, ht, wd)
+        inp  = inp.view(batch*num, -1, ht, wd)
         corr = corr.view(batch*num, -1, ht, wd)
         flow = flow.view(batch*num, -1, ht, wd)
 
         corr = self.corr_encoder(corr)
         flow = self.flow_encoder(flow)
-        net = self.gru(net, inp, corr, flow)
+        net  = self.gru(net, inp, corr, flow)
 
-        ### update variables ###
-        delta = self.delta(net).view(*output_dim)
+        delta  = self.delta(net).view(*output_dim)
         weight = self.weight(net).view(*output_dim)
 
-        delta = delta.permute(0,1,3,4,2)[...,:2].contiguous()
+        delta  = delta.permute(0,1,3,4,2)[...,:2].contiguous()
         weight = weight.permute(0,1,3,4,2)[...,:2].contiguous()
 
         net = net.view(*output_dim)
@@ -138,7 +144,6 @@ class UpdateModule(nn.Module):
         if ii is not None:
             eta, upmask = self.agg(net, ii.to(net.device))
             return net, delta, weight, eta, upmask
-
         else:
             return net, delta, weight
 
@@ -146,32 +151,26 @@ class UpdateModule(nn.Module):
 class DroidNet(nn.Module):
     def __init__(self):
         super(DroidNet, self).__init__()
-        self.fnet = BasicEncoder(output_dim=128, norm_fn='instance')
-        self.cnet = BasicEncoder(output_dim=256, norm_fn='none')
+        self.fnet   = BasicEncoder(output_dim=128, norm_fn='instance')
+        self.cnet   = BasicEncoder(output_dim=256, norm_fn='none')
         self.update = UpdateModule()
-
+        self.jego   = JEGOModule(feature_dim=128, depth=4)   # ← add
 
     def extract_features(self, images):
-        """ run feeature extraction networks """
-
-        # normalize images
         images = images[:, :, [2,1,0]] / 255.0
         mean = torch.as_tensor([0.485, 0.456, 0.406], device=images.device)
-        std = torch.as_tensor([0.229, 0.224, 0.225], device=images.device)
+        std  = torch.as_tensor([0.229, 0.224, 0.225], device=images.device)
         images = images.sub_(mean[:, None, None]).div_(std[:, None, None])
 
         fmaps = self.fnet(images)
-        net = self.cnet(images)
-        
-        net, inp = net.split([128,128], dim=2)
+        net   = self.cnet(images)
+
+        net, inp = net.split([128, 128], dim=2)
         net = torch.tanh(net)
         inp = torch.relu(inp)
         return fmaps, net, inp
 
-
     def forward(self, Gs, images, disps, intrinsics, graph=None, num_steps=12, fixedp=2):
-        """ Estimates SE3 or Sim3 between pair of frames """
-
         u = keyframe_indicies(graph)
         ii, jj, kk = graph_to_edge_list(graph)
 
@@ -179,27 +178,36 @@ class DroidNet(nn.Module):
         jj = jj.to(device=images.device, dtype=torch.long)
 
         fmaps, net, inp = self.extract_features(images)
-        net, inp = net[:,ii], inp[:,ii] 
-        corr_fn = CorrBlock(fmaps[:,ii], fmaps[:,jj], num_levels=4, radius=3)
+        net, inp = net[:,ii], inp[:,ii]
+
+        # ── JEGO enrichment ──────────────────────────────────────
+        B, N, C, H, W = fmaps.shape
+        E = len(ii)
+        fi = fmaps[:, ii].view(B*E, C, H, W)
+        fj = fmaps[:, jj].view(B*E, C, H, W)
+        fi, fj = self.jego(fi, fj)
+        fmap_ii = fi.view(B, E, C, H, W)
+        fmap_jj = fj.view(B, E, C, H, W)
+        # ─────────────────────────────────────────────────────────
+
+        corr_fn = CorrBlock(fmap_ii, fmap_jj, num_levels=4, radius=3)
 
         ht, wd = images.shape[-2:]
         coords0 = pops.coords_grid(ht//8, wd//8, device=images.device)
-        
+
         coords1, _ = pops.projective_transform(Gs, disps, intrinsics, ii, jj)
         target = coords1.clone()
 
         Gs_list, disp_list, residual_list = [], [], []
         for step in range(num_steps):
-            Gs = Gs.detach()
-            disps = disps.detach()
+            Gs      = Gs.detach()
+            disps   = disps.detach()
             coords1 = coords1.detach()
-            target = target.detach()
+            target  = target.detach()
 
-            # extract motion features
-            corr = corr_fn(coords1)
-            resd = target - coords1
-            flow = coords1 - coords0
-
+            corr   = corr_fn(coords1)
+            resd   = target - coords1
+            flow   = coords1 - coords0
             motion = torch.cat([flow, resd], dim=-1)
             motion = motion.permute(0,1,4,2,3).clamp(-64.0, 64.0)
 
@@ -217,6 +225,5 @@ class DroidNet(nn.Module):
             Gs_list.append(Gs)
             disp_list.append(upsample_disp(disps, upmask))
             residual_list.append(valid_mask * residual)
-
 
         return Gs_list, disp_list, residual_list
